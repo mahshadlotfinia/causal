@@ -1,0 +1,54 @@
+CausalAudit:
+  # MIMIC-based manifest (MS-CXR + MIMIC + ReXErr)
+  manifest_csv: /PATH/causal/data_loader/probe_set_manifest.csv
+  image_root: /PATH/MIMIC
+  results_dir: /PATH/Repositories_target_files/causal/results
+
+  # CheXpert generalization manifest
+  chexpert_manifest_csv: /PATH/causal/data_loader/chexpert_manifest.csv
+  chexpert_master_csv: /PATH/CheXpert-v1.0/chexpert_master_list_20percenttest.csv
+  chexpert_image_root: /PATH
+  chexpert_results_dir: /PATH/Repositories_target_files/causal/results_chexpert
+
+  # RAD-DINO
+  raddino_probe_dir: /PATH/Repositories_target_files/causal/raddino_probes
+  raddino_features_path: /PATH/Repositories_target_files/causal/raddino_features.npz
+  raddino_chexpert_probe_dir: /PATH/Repositories_target_files/causal/raddino_probes_chexpert
+  raddino_chexpert_features_path: /PATH/Repositories_target_files/causal/raddino_features_chexpert.npz
+  mimic_master_csv: /PATH/MIMIC/mimic_master_list.csv
+
+  # Image
+  target_resolution: 224
+
+  # API inference (all models except RAD-DINO)
+  api_base_url: "ADDRESS"
+  openai_api_key: "YOUR KEY"
+  api_key: "YOUR KEY"
+  max_new_tokens: 10
+  reasoning_max_new_tokens: 2048
+
+  # DataLoader (RAD-DINO only)
+  num_workers: 4
+
+  # RAD-DINO probe training
+  raddino_feature_batch_size: 16
+  raddino_train_splits:
+    - train
+    - valid
+
+Network:
+  weight_decay: 0.01
+  amsgrad: false
+  num_epochs: 5
+
+network_output_path: network_data/
+output_data_path: output_data/
+tb_logs_path: tensor_board_logs/
+stat_log_path: stat_logs/
+checkpoint_name: checkpoint.tar
+trained_model_name: trained_model.pth
+
+file_path: /PATH
+target_dir: /PATH/Repositories_target_files/causal
+display_stats_freq: 1
+hf_login: "YOUR_HF_TOKEN"
