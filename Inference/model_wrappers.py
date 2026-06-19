@@ -174,7 +174,7 @@ class APIModelWrapper:
 
     def __init__(self, model_name: str, params: dict):
         import httpx
-        from openai import OpenAI
+        from openai import OpenAI, AzureOpenAI
 
         info = MODEL_REGISTRY[model_name]
         cfg  = params["CausalAudit"]
@@ -191,16 +191,22 @@ class APIModelWrapper:
         )
 
         api_type = self.api_type
+        self.is_azure = False
+        self.azure_deployment = None
 
         if api_type == "openai":
-            self.client = OpenAI(
-                api_key=cfg["openai_api_key"],
+            # PhysioNet/Stanford credentialed image data may NOT be sent to the
+            # public OpenAI API. Route the GPT family through the Azure OpenAI
+            # Service instead, with human review and abuse-monitoring logging
+            # disabled at the resource level. Azure addresses the model by its
+            # deployment name rather than the model id.
+            self.is_azure = True
+            self.client = AzureOpenAI(
+                azure_endpoint = cfg["azure_openai_endpoint"],
+                api_key        = cfg["azure_openai_api_key"],
+                api_version    = cfg["azure_openai_api_version"],
             )
-        elif api_type == "openrouter":
-            self.client = OpenAI(
-                base_url=cfg["openrouter_base_url"],
-                api_key=cfg["openrouter_api_key"],
-            )
+            self.azure_deployment = cfg.get("azure_openai_deployment", self.hf_id)
         else:
             self.client = OpenAI(
                 base_url=cfg["api_base_url"],
@@ -248,12 +254,13 @@ class APIModelWrapper:
         # OpenAI API and GPT-5 models do not support logprobs with image inputs
         use_logprobs = (
             self.api_type != "openai"
+            and not self.is_azure
             and not self.hf_id.startswith("gpt-5")
         )
 
         if self.api_type == "openai":
             request_kwargs = dict(
-                model=self.hf_id,
+                model=(self.azure_deployment if self.is_azure else self.hf_id),
                 input=_to_openai_responses_input(messages),
                 max_output_tokens=self.max_tokens,
             )

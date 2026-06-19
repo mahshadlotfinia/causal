@@ -4,7 +4,7 @@
 
 This is the official repository of the paper **Vision-language models for chest radiography do not always need the image**.
 
-Preprint version: [link to be added].
+Preprint version: [https://arxiv.org/abs/2606.17710](https://arxiv.org/abs/2606.17710).
 
 Medical vision-language models (VLMs) are increasingly reported to match or exceed clinician accuracy on chest X-ray question answering. Accuracy alone, however, does not establish that a model reaches its answer by reading the image. This repository implements a causal audit that separates being correct from looking at the image. We probe nine models with controlled image interventions and measure whether a correct answer actually depends on the visual evidence it claims to use.
 
@@ -37,7 +37,7 @@ The audit covers medical VLMs, general-purpose VLMs, a frontier API model, text-
 | Gemma-4-26B | google/gemma-4-26B-A4B-it | General VLM |
 | Qwen3-VL-32B | Qwen/Qwen3-VL-32B-Instruct | General VLM |
 | Mistral-Small-4-119B | mistralai/Mistral-Small-4-119B-2603-NVFP4 | General VLM |
-| GPT-5 | gpt-5 (OpenAI API) | Frontier VLM |
+| GPT-5 | gpt-5 (Azure OpenAI Service) | Frontier VLM |
 | DeepSeek-R1-7B | deepseek-ai/DeepSeek-R1-Distill-Qwen-7B | Text-only reasoning baseline |
 | RAD-DINO | microsoft/rad-dino | Vision-only reference (linear probe) |
 
@@ -55,7 +55,7 @@ source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 pip install -e .
 ```
 
-The pipeline uses PyTorch, Hugging Face Transformers, scikit-learn, NumPy, SciPy, pandas, and Pillow. Open-weight models are loaded through Transformers; GPT-5 is accessed through the OpenAI API.
+The pipeline uses PyTorch, Hugging Face Transformers, scikit-learn, NumPy, SciPy, pandas, and Pillow. Open-weight models are loaded through Transformers; GPT-5 is accessed through the Azure OpenAI Service.
 
 ### 2. Configuration
 
@@ -71,7 +71,7 @@ CausalAudit:
   global_config_path:    /path/to/config/config.yaml
 ```
 
-Set `OPENAI_API_KEY` in your environment to evaluate GPT-5.
+To evaluate GPT-5, set the Azure OpenAI keys in `config.yaml` (`azure_openai_endpoint`, `azure_openai_api_key`, `azure_openai_api_version`, `azure_openai_deployment`).
 
 ### 3. Data access
 
@@ -150,10 +150,14 @@ If you use this repository, please cite our paper:
 
 ```bibtex
 @misc{causalgroundingcxr2026,
-  title  = {Vision-language models for chest radiography do not always need the image},
-  author = {Lotfinia, Mahshad and others},
-  year   = {2026},
-  note   = {Preprint}
+  title         = {Vision-language models for chest radiography do not always need the image},
+  author        = {Lotfinia, Mahshad and others},
+  year          = {2026},
+  eprint        = {2606.17710},
+  archivePrefix = {arXiv},
+  primaryClass  = {cs},
+  doi           = {10.48550/arXiv.2606.17710},
+  url           = {https://arxiv.org/abs/2606.17710}
 }
 ```
 

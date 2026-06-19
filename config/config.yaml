@@ -23,9 +23,12 @@ CausalAudit:
   # API inference (all models except RAD-DINO)
   api_base_url: "ADDRESS"
   openai_api_key: "YOUR KEY"
-  api_key: "YOUR KEY"
   max_new_tokens: 10
   reasoning_max_new_tokens: 2048
+  azure_openai_endpoint: "https://YOUR-RESOURCE.openai.azure.com/"
+  azure_openai_api_key: "YOUR_AZURE_KEY"
+  azure_openai_api_version: "xxxxxxxx"
+  azure_openai_deployment: "YOUR_GPT5_DEPLOYMENT_NAME"
 
   # DataLoader (RAD-DINO only)
   num_workers: 4
