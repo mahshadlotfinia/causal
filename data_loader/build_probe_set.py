@@ -3,7 +3,7 @@ data_loader/build_probe_set.py
 Created May 22, 2026
 
 Builds the unified manifest CSV combining MS-CXR, MIMIC-CXR, and ReXErr-v1
-test subsets for the causal grounding audit of medical VLMs.
+test subsets for the causal grounding audit of medical VLMs
 
 @author: Mahshad Lotfinia
 https://github.com/mahshadlotfinia/
