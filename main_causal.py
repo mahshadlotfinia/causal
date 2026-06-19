@@ -2,7 +2,7 @@
 main_causal.py
 Created May 22, 2026
 
-Main governing functions for the causal grounding audit of medical VLMs.
+Main governing functions for the causal grounding audit of medical VLMs
 
 @author: Mahshad Lotfinia
 https://github.com/mahshadlotfinia/
