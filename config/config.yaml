@@ -54,4 +54,3 @@ trained_model_name: trained_model.pth
 file_path: /PATH
 target_dir: /PATH/Repositories_target_files/causal
 display_stats_freq: 1
-hf_login: "YOUR_HF_TOKEN"

@@ -146,6 +146,10 @@ The resolution check re-runs the masking conditions at 512 px and reports CGR at
 
 ## Citation
 
+M. Lotfinia, et al. Vision-language models for chest radiography do not always need the image. arXiv:2606.17710, 2026.
+
+
+
 If you use this repository, please cite our paper:
 
 ```bibtex
