@@ -2,7 +2,7 @@
 Inference/model_wrappers.py
 Created May 22, 2026
 
-Model registry and wrappers for all 11 models.
+Model registry and wrappers for all models.
 
 @author: Mahshad Lotfinia
 https://github.com/mahshadlotfinia/

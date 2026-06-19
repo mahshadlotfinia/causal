@@ -101,8 +101,8 @@ Fits the RAD-DINO linear probe on frozen features. Note that on CheXpert this pr
 ### Run inference
 
 ```bash
-python -m main_causal run_model --model "Gemma-4-26B"          # all conditions, MIMIC
-python -m main_causal run_chexpert_model --model "Gemma-4-26B" # CheXpert
+python -m main_causal run_model --model "Gemma-4-26B"          
+python -m main_causal run_chexpert_model --model "Gemma-4-26B" 
 ```
 
 Each model is queried under every applicable condition. Outputs are per-condition CSVs (`original.csv`, `swap.csv`, `target_mask.csv`, `irrelevant_mask.csv`) holding the parsed answer, the raw response, the confidence, and the ground-truth label per case.
@@ -110,8 +110,8 @@ Each model is queried under every applicable condition. Outputs are per-conditio
 ### Compute metrics
 
 ```bash
-python -m main_causal compute_metrics            # MIMIC
-python -m main_causal compute_chexpert_metrics   # CheXpert
+python -m main_causal compute_metrics           
+python -m main_causal compute_chexpert_metrics   
 ```
 
 This produces a single wide `all_metrics.csv` per dataset containing every primary and supplementary metric with bootstrap mean, standard deviation, and 95% CI, alongside `paired_comparisons.csv` for the model-versus-baseline and all-pairs comparisons. Redundant per-table breakdowns are written to an `already_used/` subfolder for provenance.
