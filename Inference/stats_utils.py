@@ -1,43 +1,113 @@
 """
 Inference/stats_utils.py
-Created May 22, 2026
-
-Reusable statistical utilities used across all metric modules.
+Created on September 14, 2026
 
 @author: Mahshad Lotfinia
-https://github.com/mahshadlotfinia/
+https://github.com/mahshadlotfinia
 """
 
-import numpy as np
 from typing import List, Optional
 
-N_BOOT    = 10000
+import numpy as np
+
+N_BOOT    = 1000
 N_PERM    = 1000
 BOOT_SEED = 0
 
+_MAX_CHUNK_ELEMS = 64_000_000
+
+
+def _cluster_sums_setup(values: np.ndarray, cluster_ids: np.ndarray):
+    unique_c, inverse = np.unique(cluster_ids, return_inverse=True)
+    K = len(unique_c)
+    counts = np.bincount(inverse, minlength=K).astype(float)
+    sums = np.bincount(inverse, weights=values, minlength=K)
+    return K, inverse, counts, sums
+
+
+def _cluster_bootstrap_means(
+    value_arrays: List[np.ndarray], cluster_ids: np.ndarray, n_boot: int, seed: int,
+) -> List[np.ndarray]:
+    K, inverse, counts, _ = _cluster_sums_setup(value_arrays[0], cluster_ids)
+    rng = np.random.RandomState(seed)
+    draw = rng.randint(0, K, size=(n_boot, K))
+    total_count = counts[draw].sum(axis=1)
+    results = []
+    for values in value_arrays:
+        sums = np.bincount(inverse, weights=values, minlength=K)
+        total_sum = sums[draw].sum(axis=1)
+        with np.errstate(invalid="ignore", divide="ignore"):
+            results.append(total_sum / total_count)
+    return results
+
+
+def _cluster_pad_index(cluster_ids: np.ndarray):
+    unique_c, inverse = np.unique(cluster_ids, return_inverse=True)
+    K = len(unique_c)
+    counts = np.bincount(inverse, minlength=K)
+    max_size = int(counts.max()) if K > 0 else 0
+    order = np.argsort(inverse, kind="stable")
+    sorted_inverse = inverse[order]
+    cluster_start = np.zeros(K, dtype=np.int64)
+    cluster_start[1:] = np.cumsum(counts)[:-1]
+    pos_within = np.arange(len(inverse)) - cluster_start[sorted_inverse]
+    padded = np.zeros((K, max_size), dtype=np.int64)
+    valid = np.zeros((K, max_size), dtype=bool)
+    padded[sorted_inverse, pos_within] = order
+    valid[sorted_inverse, pos_within] = True
+    return K, padded, valid
+
+
+def _iter_cluster_draws(padded: np.ndarray, valid: np.ndarray, n_boot: int, seed: int):
+    K, _ = padded.shape
+    sizes = valid.sum(axis=1).astype(np.int64)
+    flat = padded[valid]
+    starts = np.concatenate(([0], np.cumsum(sizes)[:-1]))
+    n_rows = int(sizes.sum())
+
+    rng = np.random.RandomState(seed)
+    per_replicate = max(2 * n_rows, 1)
+    chunk_boot = max(1, min(n_boot, _MAX_CHUNK_ELEMS // per_replicate))
+    done = 0
+    while done < n_boot:
+        c = min(chunk_boot, n_boot - done)
+        draw = rng.randint(0, K, size=(c, K))
+        lens = sizes[draw]
+        totals = lens.sum(axis=1)
+        max_total = int(totals.max()) if c else 0
+        row_idx = np.zeros((c, max_total), dtype=np.int64)
+        row_valid = np.zeros((c, max_total), dtype=bool)
+        for i in range(c):
+            li = lens[i]
+            t = int(totals[i])
+            if t == 0:
+                continue
+            csum = np.cumsum(li)
+            off = np.repeat(starts[draw[i]], li)
+            within = np.arange(t) - np.repeat(csum - li, li)
+            row_idx[i, :t] = flat[off + within]
+            row_valid[i, :t] = True
+        yield row_idx, row_valid
+        done += c
 
 
 def bootstrap_proportion(
     values: np.ndarray,
+    cluster_ids: Optional[np.ndarray] = None,
     n_boot: int = N_BOOT,
     seed: int = BOOT_SEED,
 ) -> dict:
-    """
-    Percentile bootstrap 95% CI for the mean of a binary (0/1) array.
-
-    Returns: {point, std, ci_lower, ci_upper, n}
-        std       = standard deviation of the bootstrap distribution
-                    (standard error of the proportion)
-    Returns NaN entries when n == 0.
-    """
     values = np.asarray(values, dtype=float)
     n = len(values)
     if n == 0:
         return {"point": np.nan, "std": np.nan, "ci_lower": np.nan,
                 "ci_upper": np.nan, "n": 0}
-    rng = np.random.RandomState(seed)
-    idx = rng.randint(0, n, size=(n_boot, n))
-    boot_means = values[idx].mean(axis=1)
+    if cluster_ids is not None:
+        boot_means, = _cluster_bootstrap_means([values], np.asarray(cluster_ids), n_boot, seed)
+    else:
+        rng = np.random.RandomState(seed)
+        idx = rng.randint(0, n, size=(n_boot, n))
+        boot_means = values[idx].mean(axis=1)
     return {
         "point":    float(values.mean()),
         "std":      float(boot_means.std(ddof=1)),
@@ -47,27 +117,13 @@ def bootstrap_proportion(
     }
 
 
-
-
 def paired_bootstrap_diff(
     values_a: np.ndarray,
     values_b: np.ndarray,
+    cluster_ids: Optional[np.ndarray] = None,
     n_boot: int = N_BOOT,
     seed: int = BOOT_SEED,
 ) -> dict:
-    """
-    Paired bootstrap CI and two-sided p-value for:
-        diff = mean(values_a) - mean(values_b)
-
-    Both arrays must be aligned: same cases in the same order.
-
-    p-value uses the shift-and-reflect method:
-        - Bootstrap the paired difference to estimate sampling distribution.
-        - Shift the bootstrap distribution to be centered at 0 (H0: diff = 0).
-        - p = P(|shifted bootstrap diff| >= |observed diff|).
-
-    Returns: {point, std, ci_lower, ci_upper, p_value, n}
-    """
     values_a = np.asarray(values_a, dtype=float)
     values_b = np.asarray(values_b, dtype=float)
     n = len(values_a)
@@ -75,16 +131,22 @@ def paired_bootstrap_diff(
     if n == 0:
         return {"point": np.nan, "std": np.nan, "ci_lower": np.nan,
                 "ci_upper": np.nan, "p_value": np.nan, "n": 0}
-    rng   = np.random.RandomState(seed)
-    idx   = rng.randint(0, n, size=(n_boot, n))
     point = float(values_a.mean() - values_b.mean())
-    boot_diffs = values_a[idx].mean(axis=1) - values_b[idx].mean(axis=1)
+    if cluster_ids is not None:
+        mean_a, mean_b = _cluster_bootstrap_means(
+            [values_a, values_b], np.asarray(cluster_ids), n_boot, seed
+        )
+        boot_diffs = mean_a - mean_b
+    else:
+        rng = np.random.RandomState(seed)
+        idx = rng.randint(0, n, size=(n_boot, n))
+        boot_diffs = values_a[idx].mean(axis=1) - values_b[idx].mean(axis=1)
     ci_lower   = float(np.percentile(boot_diffs, 2.5))
     ci_upper   = float(np.percentile(boot_diffs, 97.5))
     std        = float(boot_diffs.std(ddof=1))
-    centered = boot_diffs - point
-    p_value  = float(np.mean(np.abs(centered) >= abs(point)))
-    p_value  = max(p_value, 1.0 / n_boot)
+    centered   = boot_diffs - point
+    p_value    = float(np.mean(np.abs(centered) >= abs(point)))
+    p_value    = max(p_value, 1.0 / n_boot)
     return {
         "point":    point,
         "std":      std,
@@ -95,6 +157,43 @@ def paired_bootstrap_diff(
     }
 
 
+def bootstrap_two_sample_diff(
+    values_a: np.ndarray,
+    values_b: np.ndarray,
+    cluster_ids_a: Optional[np.ndarray] = None,
+    cluster_ids_b: Optional[np.ndarray] = None,
+    n_boot: int = N_BOOT,
+    seed: int = BOOT_SEED,
+) -> dict:
+    values_a = np.asarray(values_a, dtype=float)
+    values_b = np.asarray(values_b, dtype=float)
+    n_a, n_b = len(values_a), len(values_b)
+    if n_a == 0 or n_b == 0:
+        return {"point": np.nan, "std": np.nan, "ci_lower": np.nan,
+                "ci_upper": np.nan, "n_a": n_a, "n_b": n_b}
+    point = float(values_a.mean() - values_b.mean())
+    if cluster_ids_a is not None:
+        boot_a, = _cluster_bootstrap_means([values_a], np.asarray(cluster_ids_a), n_boot, seed)
+    else:
+        rng_a = np.random.RandomState(seed)
+        idx_a = rng_a.randint(0, n_a, size=(n_boot, n_a))
+        boot_a = values_a[idx_a].mean(axis=1)
+    if cluster_ids_b is not None:
+        boot_b, = _cluster_bootstrap_means([values_b], np.asarray(cluster_ids_b), n_boot, seed + 1)
+    else:
+        rng_b = np.random.RandomState(seed + 1)
+        idx_b = rng_b.randint(0, n_b, size=(n_boot, n_b))
+        boot_b = values_b[idx_b].mean(axis=1)
+    boot = boot_a - boot_b
+    return {
+        "point":    point,
+        "std":      float(boot.std(ddof=1)),
+        "ci_lower": float(np.percentile(boot, 2.5)),
+        "ci_upper": float(np.percentile(boot, 97.5)),
+        "n_a":      int(n_a),
+        "n_b":      int(n_b),
+    }
+
 
 def permutation_test_2groups(
     values_a: np.ndarray,
@@ -102,12 +201,6 @@ def permutation_test_2groups(
     n_perm: int = N_PERM,
     seed: int = BOOT_SEED,
 ) -> float:
-    """
-    Two-sided permutation test for H0: mean(values_a) == mean(values_b).
-
-    Test statistic: |mean(a) - mean(b)|.
-    Returns p-value. Returns NaN if either group has fewer than 2 observations.
-    """
     values_a = np.asarray(values_a, dtype=float)
     values_b = np.asarray(values_b, dtype=float)
     if len(values_a) < 2 or len(values_b) < 2:
@@ -129,13 +222,6 @@ def permutation_test_kgroups(
     n_perm: int = N_PERM,
     seed: int = BOOT_SEED,
 ) -> float:
-    """
-    Permutation F-test for H0: all group means are equal (k >= 2 groups).
-
-    Uses the one-way ANOVA F-statistic as test statistic.
-    Groups with fewer than 2 observations are dropped.
-    Returns p-value. Returns NaN if fewer than 2 valid groups remain.
-    """
     groups = [np.asarray(g, dtype=float) for g in groups if len(g) >= 2]
     if len(groups) < 2:
         return float("nan")
@@ -156,9 +242,9 @@ def permutation_test_kgroups(
     rng   = np.random.RandomState(seed)
     count = 0
     for _ in range(n_perm):
-        perm   = rng.permutation(pooled)
-        start  = 0
-        pgs    = []
+        perm  = rng.permutation(pooled)
+        start = 0
+        pgs   = []
         for s in sizes:
             pgs.append(perm[start:start + s])
             start += s
@@ -167,14 +253,7 @@ def permutation_test_kgroups(
     return (count + 1) / (n_perm + 1)
 
 
-
 def bh_fdr(p_values: np.ndarray) -> np.ndarray:
-    """
-    Benjamini-Hochberg step-up FDR correction.
-    Returns adjusted p-values (q-values). NaN inputs pass through as NaN.
-
-    Reference: Benjamini & Hochberg (1995), J. Royal Stat. Soc. B, 57(1):289-300.
-    """
     p_values = np.asarray(p_values, dtype=float)
     n = len(p_values)
     if n == 0:
@@ -183,19 +262,345 @@ def bh_fdr(p_values: np.ndarray) -> np.ndarray:
     valid_idx = np.where(~nan_mask)[0]
     if len(valid_idx) == 0:
         return p_values.copy()
-    valid_p   = p_values[valid_idx]
-    m         = len(valid_p)
-    order     = np.argsort(valid_p)
-    p_sorted  = valid_p[order]
-    # BH adjustment: adj[i] = p_sorted[i] * m / (i+1)
+    valid_p  = p_values[valid_idx]
+    m        = len(valid_p)
+    order    = np.argsort(valid_p)
+    p_sorted = valid_p[order]
     adj = p_sorted * m / (np.arange(m, dtype=float) + 1)
-    # Enforce monotonicity via running minimum from the right
     for i in range(m - 2, -1, -1):
         adj[i] = min(adj[i], adj[i + 1])
     adj = np.minimum(adj, 1.0)
-    # Map back to original order
     inv_order = np.empty(m, dtype=int)
     inv_order[order] = np.arange(m)
     result = p_values.copy()
     result[valid_idx] = adj[inv_order]
     return result
+
+
+def _percentile_ci(boot: np.ndarray) -> tuple:
+    boot = boot[np.isfinite(boot)]
+    if boot.size == 0:
+        return (np.nan, np.nan, np.nan)
+    std = float(np.std(boot, ddof=1)) if boot.size > 1 else np.nan
+    return (std, float(np.percentile(boot, 2.5)), float(np.percentile(boot, 97.5)))
+
+
+def paired_bootstrap_statistic(
+    arrays: List[np.ndarray],
+    stat_fn,
+    cluster_ids: Optional[np.ndarray] = None,
+    n_boot: int = N_BOOT,
+    seed: int = BOOT_SEED,
+) -> dict:
+    arrays = [np.asarray(a, dtype=float) for a in arrays]
+    n = len(arrays[0])
+    assert all(len(a) == n for a in arrays), "all arrays must be equal length"
+    if n == 0:
+        return {"point": np.nan, "std": np.nan, "ci_lower": np.nan,
+                "ci_upper": np.nan, "n": 0}
+    point = float(stat_fn(*arrays))
+    rng   = np.random.RandomState(seed)
+    boot  = np.empty(n_boot, dtype=float)
+
+    if cluster_ids is not None:
+        cluster_ids = np.asarray(cluster_ids)
+        unique_c, inverse = np.unique(cluster_ids, return_inverse=True)
+        K = len(unique_c)
+        cluster_rows = [np.where(inverse == k)[0] for k in range(K)]
+        for b in range(n_boot):
+            draw = rng.randint(0, K, size=K)
+            resample_idx = np.concatenate([cluster_rows[k] for k in draw])
+            resampled = [a[resample_idx] for a in arrays]
+            try:
+                boot[b] = stat_fn(*resampled)
+            except Exception:
+                boot[b] = np.nan
+    else:
+        idx = rng.randint(0, n, size=(n_boot, n))
+        for b in range(n_boot):
+            resampled = [a[idx[b]] for a in arrays]
+            try:
+                boot[b] = stat_fn(*resampled)
+            except Exception:
+                boot[b] = np.nan
+
+    std, lo, hi = _percentile_ci(boot)
+    return {"point": point, "std": std, "ci_lower": lo, "ci_upper": hi,
+            "n": int(n)}
+
+
+def _rank_rows(mat: np.ndarray) -> np.ndarray:
+    order = np.argsort(mat, axis=1, kind="quicksort")
+    ranks = np.empty_like(order, dtype=np.float64)
+    row_idx = np.arange(mat.shape[0])[:, None]
+    ranks[row_idx, order] = np.arange(1, mat.shape[1] + 1)[None, :]
+    return ranks
+
+
+def bootstrap_spearman(
+    x: np.ndarray,
+    y: np.ndarray,
+    cluster_ids: Optional[np.ndarray] = None,
+    n_boot: int = N_BOOT,
+    seed: int = BOOT_SEED,
+) -> dict:
+    from scipy.stats import spearmanr
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+    mask = np.isfinite(x) & np.isfinite(y)
+    x, y = x[mask], y[mask]
+    n = len(x)
+    if n < 4:
+        return {"point": np.nan, "std": np.nan, "ci_lower": np.nan,
+                "ci_upper": np.nan, "n": int(n)}
+    point = float(spearmanr(x, y).correlation)
+
+    if cluster_ids is not None:
+        cluster_ids = np.asarray(cluster_ids)[mask]
+        K, padded, valid = _cluster_pad_index(cluster_ids)
+        boot = np.empty(n_boot, dtype=float)
+        pos = 0
+        for row_idx, row_valid in _iter_cluster_draws(padded, valid, n_boot, seed):
+            c = row_idx.shape[0]
+            x_g, y_g = x[row_idx], y[row_idx]
+            rx, ry = _rank_rows(x_g), _rank_rows(y_g)
+            n_valid = row_valid.sum(axis=1, keepdims=True)
+            with np.errstate(invalid="ignore", divide="ignore"):
+                rx_mean = (rx * row_valid).sum(axis=1, keepdims=True) / n_valid
+                ry_mean = (ry * row_valid).sum(axis=1, keepdims=True) / n_valid
+            rx_c = (rx - rx_mean) * row_valid
+            ry_c = (ry - ry_mean) * row_valid
+            num = (rx_c * ry_c).sum(axis=1)
+            den = np.sqrt((rx_c ** 2).sum(axis=1) * (ry_c ** 2).sum(axis=1))
+            with np.errstate(invalid="ignore", divide="ignore"):
+                boot[pos:pos + c] = num / den
+            pos += c
+    else:
+        rng = np.random.RandomState(seed)
+        idx = rng.randint(0, n, size=(n_boot, n))
+        rx, ry = _rank_rows(x[idx]), _rank_rows(y[idx])
+        rx_c = rx - rx.mean(axis=1, keepdims=True)
+        ry_c = ry - ry.mean(axis=1, keepdims=True)
+        num = (rx_c * ry_c).sum(axis=1)
+        den = np.sqrt((rx_c ** 2).sum(axis=1) * (ry_c ** 2).sum(axis=1))
+        with np.errstate(invalid="ignore", divide="ignore"):
+            boot = num / den
+
+    std, lo, hi = _percentile_ci(boot)
+    return {"point": point, "std": std, "ci_lower": lo, "ci_upper": hi, "n": int(n)}
+
+
+def bootstrap_slope(
+    x: np.ndarray,
+    y: np.ndarray,
+    cluster_ids: Optional[np.ndarray] = None,
+    n_boot: int = N_BOOT,
+    seed: int = BOOT_SEED,
+) -> dict:
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+    mask = np.isfinite(x) & np.isfinite(y)
+    x, y = x[mask], y[mask]
+    if len(x) < 3:
+        return {"point": np.nan, "std": np.nan, "ci_lower": np.nan,
+                "ci_upper": np.nan, "n": int(len(x))}
+
+    def _slope(a, b):
+        A = np.vstack([a, np.ones_like(a)]).T
+        coef, *_ = np.linalg.lstsq(A, b, rcond=None)
+        return coef[0]
+    cids = np.asarray(cluster_ids)[mask] if cluster_ids is not None else None
+    return paired_bootstrap_statistic([x, y], _slope, cluster_ids=cids,
+                                      n_boot=n_boot, seed=seed)
+
+
+def _auroc_batch(
+    yt: np.ndarray, ys: np.ndarray, valid_mask: Optional[np.ndarray] = None,
+) -> np.ndarray:
+    n = yt.shape[1]
+    if valid_mask is not None:
+        ys = np.where(valid_mask, ys, -np.inf)
+        yt = np.where(valid_mask, yt, 0.0)
+        n_valid = valid_mask.sum(axis=1)
+        n_invalid = n - n_valid
+    else:
+        n_valid = n
+        n_invalid = 0
+
+    ranks = _rank_rows(ys)
+    n_pos = yt.sum(axis=1)
+    n_neg = n_valid - n_pos
+    sum_pos_ranks = (ranks * yt).sum(axis=1)
+    if valid_mask is not None:
+        sum_pos_ranks = sum_pos_ranks - n_pos * n_invalid
+    denom = n_pos * n_neg
+    with np.errstate(invalid="ignore", divide="ignore"):
+        auroc = (sum_pos_ranks - n_pos * (n_pos + 1) / 2.0) / denom
+    auroc[(n_pos == 0) | (n_neg == 0)] = np.nan
+    return auroc
+
+
+def _bfill_last_valid(arr: np.ndarray, valid_mask: np.ndarray) -> np.ndarray:
+    n_boot, n = arr.shape
+    idx = np.where(valid_mask, np.arange(n)[None, :], n)
+    idx_rev = idx[:, ::-1]
+    filled_idx = np.minimum.accumulate(idx_rev, axis=1)[:, ::-1]
+    row_idx = np.arange(n_boot)[:, None]
+    return arr[row_idx, filled_idx]
+
+
+def _average_precision_batch(
+    yt: np.ndarray, ys: np.ndarray, valid_mask: Optional[np.ndarray] = None,
+) -> np.ndarray:
+    n_boot, n = yt.shape
+    if valid_mask is not None:
+        ys = np.where(valid_mask, ys, -np.inf)
+        yt = np.where(valid_mask, yt, 0.0)
+
+    order = np.argsort(-ys, axis=1, kind="stable")
+    row_idx = np.arange(n_boot)[:, None]
+    ys_sorted = ys[row_idx, order]
+    yt_sorted = yt[row_idx, order]
+
+    is_group_end = np.ones((n_boot, n), dtype=bool)
+    is_group_end[:, :-1] = ys_sorted[:, :-1] != ys_sorted[:, 1:]
+
+    tp_cum = np.cumsum(yt_sorted, axis=1)
+    rank = np.arange(1, n + 1)[None, :]
+    precision_at_k = tp_cum / rank
+    group_end_precision = _bfill_last_valid(
+        np.where(is_group_end, precision_at_k, 0.0), is_group_end
+    )
+
+    n_pos = yt.sum(axis=1)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        ap = (group_end_precision * yt_sorted).sum(axis=1) / n_pos
+    ap[n_pos == 0] = np.nan
+    return ap
+
+
+def bootstrap_auroc(
+    y_true: np.ndarray,
+    y_score: np.ndarray,
+    cluster_ids: Optional[np.ndarray] = None,
+    n_boot: int = N_BOOT,
+    seed: int = BOOT_SEED,
+) -> dict:
+    from sklearn.metrics import roc_auc_score
+    y_true  = np.asarray(y_true, dtype=float)
+    y_score = np.asarray(y_score, dtype=float)
+    mask = np.isfinite(y_true) & np.isfinite(y_score)
+    y_true, y_score = y_true[mask], y_score[mask]
+    n = len(y_true)
+    if n < 2 or len(np.unique(y_true)) < 2:
+        return {"point": np.nan, "std": np.nan, "ci_lower": np.nan,
+                "ci_upper": np.nan, "n": int(n)}
+    point = float(roc_auc_score(y_true, y_score))
+
+    if cluster_ids is not None:
+        cluster_ids = np.asarray(cluster_ids)[mask]
+        K, padded, valid = _cluster_pad_index(cluster_ids)
+        boot = np.empty(n_boot, dtype=float)
+        pos = 0
+        for row_idx, row_valid in _iter_cluster_draws(padded, valid, n_boot, seed):
+            c = row_idx.shape[0]
+            boot[pos:pos + c] = _auroc_batch(y_true[row_idx], y_score[row_idx],
+                                             valid_mask=row_valid)
+            pos += c
+    else:
+        rng  = np.random.RandomState(seed)
+        idx  = rng.randint(0, n, size=(n_boot, n))
+        boot = _auroc_batch(y_true[idx], y_score[idx])
+
+    std, lo, hi = _percentile_ci(boot)
+    return {"point": point, "std": std, "ci_lower": lo, "ci_upper": hi, "n": int(n)}
+
+
+def bootstrap_average_precision(
+    y_true: np.ndarray,
+    y_score: np.ndarray,
+    cluster_ids: Optional[np.ndarray] = None,
+    n_boot: int = N_BOOT,
+    seed: int = BOOT_SEED,
+) -> dict:
+    from sklearn.metrics import average_precision_score
+    y_true  = np.asarray(y_true, dtype=float)
+    y_score = np.asarray(y_score, dtype=float)
+    mask = np.isfinite(y_true) & np.isfinite(y_score)
+    y_true, y_score = y_true[mask], y_score[mask]
+    n = len(y_true)
+    if n < 2 or y_true.sum() == 0:
+        return {"point": np.nan, "std": np.nan, "ci_lower": np.nan,
+                "ci_upper": np.nan, "n": int(n)}
+    point = float(average_precision_score(y_true, y_score))
+
+    if cluster_ids is not None:
+        cluster_ids = np.asarray(cluster_ids)[mask]
+        K, padded, valid = _cluster_pad_index(cluster_ids)
+        boot = np.empty(n_boot, dtype=float)
+        pos = 0
+        for row_idx, row_valid in _iter_cluster_draws(padded, valid, n_boot, seed):
+            c = row_idx.shape[0]
+            boot[pos:pos + c] = _average_precision_batch(y_true[row_idx], y_score[row_idx],
+                                                          valid_mask=row_valid)
+            pos += c
+    else:
+        rng  = np.random.RandomState(seed)
+        idx  = rng.randint(0, n, size=(n_boot, n))
+        boot = _average_precision_batch(y_true[idx], y_score[idx])
+
+    std, lo, hi = _percentile_ci(boot)
+    return {"point": point, "std": std, "ci_lower": lo, "ci_upper": hi, "n": int(n)}
+
+
+def bootstrap_auroc_diff(
+    y_true: np.ndarray,
+    score_a: np.ndarray,
+    score_b: np.ndarray,
+    cluster_ids: Optional[np.ndarray] = None,
+    n_boot: int = N_BOOT,
+    seed: int = BOOT_SEED,
+) -> dict:
+    from sklearn.metrics import roc_auc_score
+    y_true  = np.asarray(y_true, dtype=float)
+    score_a = np.asarray(score_a, dtype=float)
+    score_b = np.asarray(score_b, dtype=float)
+    mask = np.isfinite(y_true) & np.isfinite(score_a) & np.isfinite(score_b)
+    y_true, score_a, score_b = y_true[mask], score_a[mask], score_b[mask]
+    n = len(y_true)
+    if n < 2 or len(np.unique(y_true)) < 2:
+        return {"point": np.nan, "std": np.nan, "ci_lower": np.nan,
+                "ci_upper": np.nan, "p_value": np.nan, "n": int(n)}
+    point = float(roc_auc_score(y_true, score_a) - roc_auc_score(y_true, score_b))
+
+    if cluster_ids is not None:
+        cluster_ids = np.asarray(cluster_ids)[mask]
+        K, padded, valid = _cluster_pad_index(cluster_ids)
+        boot = np.empty(n_boot, dtype=float)
+        pos = 0
+        for row_idx, row_valid in _iter_cluster_draws(padded, valid, n_boot, seed):
+            c = row_idx.shape[0]
+            yt_b = y_true[row_idx]
+            boot[pos:pos + c] = (
+                _auroc_batch(yt_b, score_a[row_idx], valid_mask=row_valid)
+                - _auroc_batch(yt_b, score_b[row_idx], valid_mask=row_valid)
+            )
+            pos += c
+    else:
+        rng  = np.random.RandomState(seed)
+        idx  = rng.randint(0, n, size=(n_boot, n))
+        yt_b = y_true[idx]
+        boot = _auroc_batch(yt_b, score_a[idx]) - _auroc_batch(yt_b, score_b[idx])
+
+    finite = boot[np.isfinite(boot)]
+    if finite.size == 0:
+        return {"point": point, "std": np.nan, "ci_lower": np.nan,
+                "ci_upper": np.nan, "p_value": np.nan, "n": int(n)}
+    std = float(finite.std(ddof=1)) if finite.size > 1 else np.nan
+    ci_lower = float(np.percentile(finite, 2.5))
+    ci_upper = float(np.percentile(finite, 97.5))
+    centered = finite - point
+    p_value = float(np.mean(np.abs(centered) >= abs(point)))
+    p_value = max(p_value, 1.0 / max(finite.size, 1))
+    return {"point": point, "std": std, "ci_lower": ci_lower,
+            "ci_upper": ci_upper, "p_value": p_value, "n": int(n)}

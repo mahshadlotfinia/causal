@@ -1,56 +1,219 @@
+
+
+ocean_root:    /PATH
+home_root:     /PATH
+user_home:     /PATH
+datasets_root: /PATH
+repo_root:     "${home_root}/Repositories/causal"
+
+xray_root:     "${datasets_root}/XRay"
+mimic_root:    "${xray_root}/MIMIC"
+outputs_root:  "${ocean_root}/PATH/causal"
+manifests_dir: "${outputs_root}/manifests"
+runs_dir:      "${outputs_root}/runs"
+
 CausalAudit:
-  # MIMIC-based manifest (MS-CXR + MIMIC + ReXErr)
-  manifest_csv: /PATH/causal/data_loader/probe_set_manifest.csv
-  image_root: /PATH/MIMIC
-  results_dir: /PATH/Repositories_target_files/causal/results
+  global_config_path: "${repo_root}/config/config.yaml"
 
-  # CheXpert generalization manifest
-  chexpert_manifest_csv: /PATH/causal/data_loader/chexpert_manifest.csv
-  chexpert_master_csv: /PATH/CheXpert-v1.0/chexpert_master_list_20percenttest.csv
-  chexpert_image_root: /PATH
-  chexpert_results_dir: /PATH/Repositories_target_files/causal/results_chexpert
+  seed: 42
 
-  # RAD-DINO
-  raddino_probe_dir: /PATH/Repositories_target_files/causal/raddino_probes
-  raddino_features_path: /PATH/Repositories_target_files/causal/raddino_features.npz
-  raddino_chexpert_probe_dir: /PATH/Repositories_target_files/causal/raddino_probes_chexpert
-  raddino_chexpert_features_path: /PATH/Repositories_target_files/causal/raddino_features_chexpert.npz
-  mimic_master_csv: /PATH/MIMIC/mimic_master_list.csv
+  llm_api_key:              "YOUR_LLM_API_KEY_HERE"
+  llm_api_key_env:          "CAUSAL_LLM_API_KEY"
+  llm_api_base_url:         "YOUR_LLM_API_BASE_URL_HERE"
+  llm_api_base_url_env:     "CAUSAL_LLM_API_BASE_URL"
 
-  # Image
-  target_resolution: 224
+  datasets_root: "${datasets_root}"
+  outputs_root:  "${outputs_root}"
+  repo_root:     "${repo_root}"
+  user_home:     "${user_home}"
 
-  # API inference (all models except RAD-DINO)
-  api_base_url: "ADDRESS"
-  openai_api_key: "YOUR KEY"
-  max_new_tokens: 10
-  reasoning_max_new_tokens: 2048
-  azure_openai_endpoint: "https://YOUR-RESOURCE.openai.azure.com/"
-  azure_openai_api_key: "YOUR_AZURE_KEY"
-  azure_openai_api_version: "xxxxxxxx"
-  azure_openai_deployment: "YOUR_GPT5_DEPLOYMENT_NAME"
+  data:
+    mimic_master_csv:     "${mimic_root}/mimic_master_list.csv"
+    mimic_image_root:     "${mimic_root}"
+    mscxr_csv:            "${xray_root}/MS-CXR/MS_CXR_Local_Alignment_v1_1_0.csv"
+    rexerr_csv:           "${xray_root}/ReXErr-v1/Sentence_level/ReXErr-sentence-level_test.csv"
+    chexpert_master_csv:  "${xray_root}/CheXpert-v1.0/chexpert_master_list.csv"
+    chexpert_image_root:  "${xray_root}"
+    frozen_mimic_manifest:    "${repo_root}/data_loader/frozen/manifest.csv"
+    frozen_chexpert_manifest: "${repo_root}/data_loader/frozen/chexpert_manifest.csv"
+    mimic_manifest:       "${manifests_dir}/manifest_v2.csv"
+    chexpert_manifest:    "${manifests_dir}/chexpert_manifest_v2.csv"
+    subsets_dir:          "${manifests_dir}/subsets"
+    resolution:           224
+    resolution_folders:
+      "224": "preprocessed224"
+      "512": "preprocessed"
+    box_space:            224
+    present_code:         1
+    absent_code:          0
+    fallback_absent_code: 3
+    min_absent_patients:  50
+    pathology_findings: [atelectasis, cardiomegaly, consolidation, edema, enlarged_cardiomediastinum, fracture, lung_lesion, lung_opacity, pleural_effusion, pleural_other, pneumonia, pneumothorax]
+    all_findings: [atelectasis, cardiomegaly, consolidation, edema, enlarged_cardiomediastinum, fracture, lung_lesion, lung_opacity, no_finding, pleural_effusion, pleural_other, pneumonia, pneumothorax, support_devices]
+    rexerr_image_dependent_types: ["Add medical device", "Change location", "Change name of device", "Change position of device", "Change severity", "False negation", "False prediction", "Change view"]
+    rexerr_text_only_types: ["Add typo", "Change to homophone", "Add repetition"]
+    rexerr_control_type: "Not applicable"
 
-  # DataLoader (RAD-DINO only)
-  num_workers: 4
+  assets:
+    dir:                   "${repo_root}/data_loader/assets"
+    noise_image:           "${repo_root}/data_loader/assets/gaussian_noise_224.png"
+    noise_seed:            0
+    natural_image:         "${repo_root}/data_loader/assets/natural_image.jpg"
+    natural_image_provenance: "${repo_root}/data_loader/assets/natural_image_provenance.txt"
 
-  # RAD-DINO probe training
-  raddino_feature_batch_size: 16
-  raddino_train_splits:
-    - train
-    - valid
+  conditions:
+    mimic:          [original, swap, opposite_swap, target_mask, irrelevant_mask, matched_mask, no_image, noise, natural_image]
+    chexpert:       [original, swap, opposite_swap]
+    resolution_512: [original, target_mask]
 
-Network:
-  weight_decay: 0.01
-  amsgrad: false
-  num_epochs: 5
+  prompts:
+    version: "v1"
+    variants: [default, brief, clinical]
+    reasoning_system_message: "You are a clinical decision support tool. After your reasoning, you MUST end your response with a single word on its own line: either Yes or No. No other text after that word."
+    display_names:
+      atelectasis: "atelectasis"
+      cardiomegaly: "cardiomegaly"
+      consolidation: "consolidation"
+      edema: "pulmonary edema"
+      enlarged_cardiomediastinum: "enlarged cardiomediastinum"
+      fracture: "rib fracture"
+      lung_lesion: "lung lesion"
+      lung_opacity: "lung opacity"
+      no_finding: "any acute abnormality"
+      pleural_effusion: "pleural effusion"
+      pleural_other: "pleural abnormality"
+      pneumonia: "pneumonia"
+      pneumothorax: "pneumothorax"
+      support_devices: "support device"
 
-network_output_path: network_data/
-output_data_path: output_data/
-tb_logs_path: tensor_board_logs/
-stat_log_path: stat_logs/
-checkpoint_name: checkpoint.tar
-trained_model_name: trained_model.pth
+  parser:
+    version: "v3"
+    affirmative_tokens: ["yes", "yeah", "correct", "true", "present", "positive"]
+    negative_tokens: ["no", "not", "absent", "negative", "false", "incorrect"]
+    head_chars: 60
+    abstention_phrases: ["need to see", "cannot see", "can't see", "unable to see", "cannot determine", "can't determine", "cannot assess", "unable to assess", "cannot evaluate", "unable to evaluate", "no image", "without the image", "without an image", "image is not", "not provided", "not able to", "i cannot", "i can't", "i am unable", "i'm unable", "insufficient information", "not possible to determine", "please provide"]
 
-file_path: /PATH
-target_dir: /PATH/Repositories_target_files/causal
-display_stats_freq: 1
+  generation:
+    max_new_tokens:           10
+    variant_max_new_tokens:
+      brief: 128
+    condition_max_new_tokens:
+      no_image: 64
+    reasoning_max_new_tokens: 2048
+    rerun_reasoning_max_new_tokens: 8192
+    temperature:              0.0
+
+  models:
+    Gemma-4-26B:          {backend: server, served_name: "google/gemma-4-26B-A4B-it", hf_id: "google/gemma-4-26B-A4B-it", modality: multimodal, reasoning: false, family: general}
+    Qwen3-VL-32B:         {backend: server, served_name: "Qwen/Qwen3-VL-32B-Instruct", hf_id: "Qwen/Qwen3-VL-32B-Instruct", modality: multimodal, reasoning: false, family: general}
+    Mistral-Small-4-119B: {backend: server, served_name: "mistralai/Mistral-Small-4-119B-2603-NVFP4", hf_id: "mistralai/Mistral-Small-4-119B-2603-NVFP4", modality: multimodal, reasoning: false, family: general}
+    MedGemma-1.5-4B:      {backend: server, served_name: "google/medgemma-1.5-4b-it", hf_id: "google/medgemma-1.5-4b-it", modality: multimodal, reasoning: false, family: medical}
+    LLaVA-Med-7B:         {backend: server, served_name: "/data/models/converted/llava-med-v1.5-7b-hf", hf_id: "microsoft/llava-med-v1.5-mistral-7b", modality: multimodal, reasoning: false, family: medical}
+    MedGemma-27B-text:    {backend: server, served_name: "google/medgemma-27b-it", hf_id: "google/medgemma-27b-it", modality: text_only, reasoning: false, family: medical}
+    DeepSeek-R1-7B:       {backend: server, served_name: "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B", hf_id: "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B", modality: text_only, reasoning: true, family: general}
+    RAD-DINO:             {backend: raddino, served_name: "microsoft/rad-dino", hf_id: "microsoft/rad-dino", modality: vision_only, reasoning: false, family: vision}
+  model_order: [Gemma-4-26B, Qwen3-VL-32B, Mistral-Small-4-119B, MedGemma-1.5-4B, LLaVA-Med-7B, MedGemma-27B-text, DeepSeek-R1-7B, RAD-DINO]
+
+  serving:
+    backend:              api
+    verify_ssl:           false
+    timeout_s:            120
+    timeout_per_token_s:  0.12
+    timeout_request_max_s: 2400
+    max_retries:          5
+    retry_backoff_s:      2.0
+    retry_backoff_max_s:  30
+    connect_retry_max_s:  600
+    rate_limit_retries:   8
+    concurrency:          16
+    max_consecutive_failures: 30
+    logprobs_top_k:       5
+    jpeg_quality:         75
+
+  raddino:
+    hf_id:                "microsoft/rad-dino"
+    feature_batch_size:   16
+    inference_batch_size: 16
+    shard_size:           5000
+    alignment_sample:     64
+    alignment_min_cosine: 0.99
+    train_splits:         [train, valid]
+    regularization_C:     1.0
+    max_iter:             1000
+    fit_seed:             42
+    device:               cuda
+    cache_dir:            "${outputs_root}/raddino_cache"
+    heads_dir:            "${outputs_root}/raddino_heads"
+    legacy_mimic_features:    "${outputs_root}/raddino_features.npz"
+    legacy_chexpert_features: "${outputs_root}/raddino_features_chexpert.npz"
+
+  runs:
+    dir:                        "${runs_dir}"
+    empty_rerun_attempts:       1
+    delivered_mimic_dir:        "${outputs_root}/results"
+    delivered_chexpert_dir:     "${outputs_root}/results_chexpert"
+    delivered_resolution_dir:   "${outputs_root}/results/resolution_check/results_512"
+    delivered_prompt_dir:       "${outputs_root}/results/prompt_sensitivity"
+    claim_stale_after_s:        21600
+
+  prompt_sensitivity:
+    variants:          [brief, clinical]
+    mscxr_conditions:  [original, target_mask, irrelevant_mask]
+    mimic_subset_n:    200
+    subset_seed:       42
+
+  resolution_probe:
+    resolution:  512
+    conditions:  [original, target_mask]
+
+  stats:
+    n_boot:                     1000
+    n_perm:                     1000
+    seed:                       0
+    cluster_by:                 subject_id
+    equivalence_margin_points:  10.0
+    min_informative_cases:      100
+    min_cell_n:                 10
+    ece_bins:                   10
+    confidence_degenerate_share: 0.90
+    category_rule:
+      ignores_image_ofr_max: 0.0
+      ignores_image_uar_min: 100.0
+    submitted_category_rule:
+      unstable_is_below: 70.0
+      uses_image_is_min: 90.0
+      sensitivity_thresholds: [50, 60, 70, 80, 90]
+
+  reader_study:
+    dir:                        "${outputs_root}/reader_study_v2"
+    june_packets_dir:           "${outputs_root}/reader_study/june_packets"
+    june_sheets:
+      SZ_submitted_reading:         "${outputs_root}/reader_study/reader1_filled/task_B_finding_presence/cases.csv"
+      LA_submitted_reading:         "${outputs_root}/reader_study/reader2_filled/task_C_reader2_agreement/cases.csv"
+      SZ_box_validation_submitted:  "${outputs_root}/reader_study/reader1_filled/task_A_box_validation/cases.csv"
+      LA_failure_taxonomy:          "${outputs_root}/reader_study/reader2_filled/task_D_failure_taxonomy/cases.csv"
+    seed:                       42
+    n_positives:                100
+    n_negatives:                100
+    display_resolution:         512
+    box_line_width:             3
+    min_days_between_sessions:  5
+    conditions_full:            [original, target_mask, irrelevant_mask, matched_mask]
+    readers:
+      TTN: {sessions: 4, conditions: [original, target_mask, irrelevant_mask, matched_mask], tasks: [balanced_reading, submitted_reading, box_validation_submitted, box_validation_new, failure_taxonomy]}
+      SZ:  {sessions: 4, conditions: [original, target_mask, irrelevant_mask, matched_mask], tasks: [balanced_reading, box_validation_new]}
+      LA:  {sessions: 3, conditions: [original, target_mask, irrelevant_mask], tasks: [balanced_reading]}
+    taxonomy_dropped_models:    [GPT-5]
+    time: {seconds_per_display: 35, seconds_per_box: 25, seconds_per_taxonomy_case: 75, overhead_fraction: 0.15}
+
+  outputs:
+    metrics_dir:      "${outputs_root}/metrics"
+    analysis_dir:     "${outputs_root}/analysis"
+    per_case_dir:     "${outputs_root}/per_case"
+    final_tables_dir: "${outputs_root}/final_tables"
+    figures_dir:      "${outputs_root}/figures"
+    status_dir:       "${outputs_root}/status"
+
+  compute:
+    print_memory_ceiling: true
+
